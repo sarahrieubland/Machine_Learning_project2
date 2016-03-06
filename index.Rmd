@@ -1,0 +1,100 @@
+## Practical Machine Learning: 
+Sarah Rieubland - 06 March 2016 - Practical Machine Learning Course -  Coursera
+
+### Data
+We use data from the Weight Lifting Exercises Dataset. The data comes from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The datasets are downloaded from the urls. 
+
+```{r echo = TRUE, warning = FALSE, message=FALSE, results = 'hide'}
+library(downloader); library(ggplot2); library(caret)
+
+setwd("/Users/srieubland/Documents/Documents/DataScience/08_MachineLearning/course_proj")
+fileUrl1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+fileUrl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download(fileUrl1, dest="pml-training.csv", mode = "wd") 
+download(fileUrl2, dest="pml-testing.csv", mode = "wd") 
+dataTrain <- read.csv("pml-training.csv")
+dataValid <- read.csv("pml-testing.csv")
+dateDownloaded <- date()
+```
+The data has been downloaded on `r dateDownloaded`. 
+Reference : *Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.*
+
+### Model building
+#### 1. Cross validation
+We use the **training** set for model building purpuse, picking variables and functions to include in the model and compare different predictors. To estimate the out-of-sample error without using the **validation** dataset (originally named testing), we create a **testing** set, representing a random selection of 25% of the original training set.
+
+```{r}
+set.seed(54321)
+inTrain <- createDataPartition(y=dataTrain$classe, p=3/4, list=FALSE)
+training <- dataTrain[inTrain,]
+testing <- dataTrain[-inTrain,]
+```
+
+#### 2. Pre-processing
+Following some exploration of the data, we find some variables where the data is entirely missing, which we decide to remove. We also use some pre-processing to standardise the accelorameter measurement variables.
+
+```{r}
+training <- training[,colnames(training)[colSums(is.na(training),na.rm = FALSE) == 0]]
+training <- training[,colnames(training)[colSums(training == "",na.rm = FALSE) == 0]]
+training <- training[,-1]
+nvar <- ncol(training)
+```
+
+#### 3. Variable selection
+
+We suspect that many variables may correlated with eachother. As the number of variables is rather large (n = `r nvar`), we use principal component analysis to select fewer variables. We select 19 variables from the accelerator measurement that can explain 95% of the variability.
+
+```{r}
+preProc <- preProcess(training[,8:nvar-1],method="pca",pcaComp=2)
+sorted <- sort(preProc[["std"]], decreasing = TRUE)
+var95 <- names(sorted)[cumsum(sorted^2)/sum(preProc[["std"]]^2) < 0.95]
+train95 <- training[, c(colnames(training)[1:7], var95, "classe")]
+```
+
+#### 4. Test individual models
+In this section, we try different models and look at the in-sample error. 
+First we use a model using regression and classification trees.
+```{r,fig.height=4, fig.width=6,fig.show = 'hold',cache = TRUE}
+set.seed(12345)
+modFit <- train(classe ~ .,method="rpart",data=train95)
+plot(modFit$finalModel, uniform=TRUE, main="Classification Tree")
+text(modFit$finalModel, use.n=TRUE, all=TRUE, cex=.7)
+ac <- confusionMatrix(predict(modFit,train95), train95$classe)$overall[[1]]
+```
+
+We see that the classification tree is not performing exceptionnally well (in sample Accuracy = `r round(ac,3)`), failing to predict any B or D class. We carry on testing other models. As the computational time of training Random Forest and Boosting model is too long my little computer, we use Linear disciminant analysis (lda) model.
+
+```{r,echo = TRUE, warning = FALSE, message=FALSE, results = 'hide'}
+modFit2 <- train(classe ~ ., data = train95, method="lda")
+ac2 <- confusionMatrix(predict(modFit2,train95), train95$classe)$overall[[1]]  
+```
+This model has good results, with an in-sample Accuracy of = `r round(ac2,3)`. Generally, better results can be obtain when combining predictors. had we been able to train different predictors, we could have used a simple blending of model to test if it gives better results.
+We therefore choose model 2, using Linear disciminant analysis.
+
+#### 5. Estimation of out of sample error
+We want to estimate the out of sample error for the chosen model. We use the **testing**, making sure to apply the same transformations.
+
+```{r}
+testing <- testing[,colnames(testing)[colSums(is.na(testing),na.rm = FALSE) == 0]]
+testing <- testing[,colnames(testing)[colSums(testing == "",na.rm = FALSE) == 0]]
+testing <- testing[,-1]
+test95 <- testing[, c(colnames(testing)[1:7], var95, "classe")]
+table(predict(modFit2,test95),test95$classe)
+```
+
+```{r}
+ac2_test <- confusionMatrix(predict(modFit2,test95), test95$classe)$overall[[1]]   
+```
+The accuracy on the testing set is rather good = `r round(ac2_test,3)`.
+
+### Validation
+We use the **validation** set to make predictions.
+```{r}
+dataValid <- dataValid[,colnames(dataValid)[colSums(is.na(dataValid),na.rm = FALSE) == 0]]
+dataValid <- dataValid[,colnames(dataValid)[colSums(dataValid == "",na.rm = FALSE) == 0]]
+dataValid <- dataValid[,-1]
+valid95 <- dataValid[, c(colnames(dataValid)[1:7], var95, "problem_id")]
+predict(modFit2,valid95)
+```
+
+
